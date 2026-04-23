@@ -49,6 +49,7 @@ def _get_token():
         return _token
     reason = "refresh-before-expiry" if _token else "initial"
     app.logger.info("Fetching OpenSky token (reason=%s)", reason)
+    resp = None
     try:
         resp = requests.post(
             _TOKEN_URL,
@@ -62,7 +63,12 @@ def _get_token():
         resp.raise_for_status()
         body = resp.json()
     except Exception:
-        app.logger.exception("OpenSky token fetch failed")
+        status = resp.status_code if resp is not None else "n/a"
+        body_head = resp.text[:200] if resp is not None else "n/a"
+        app.logger.exception(
+            "OpenSky token fetch failed (status=%s, body head=%r)",
+            status, body_head,
+        )
         raise
     _token = body["access_token"]
     expires_in = body.get("expires_in", 1800)
@@ -116,8 +122,10 @@ def get_flights():
         fetch_time, cached_result = entry
         if now - fetch_time < _CACHE_TTL_SECONDS:
             _cache.move_to_end(bbox_key)
+            app.logger.info("Flights served: count=%d cache=hit", cached_result["count"])
             return jsonify(cached_result)
 
+    resp = None
     try:
         token = _get_token()
         resp = _call_opensky(lat1, lon1, lat2, lon2, token)
@@ -135,7 +143,12 @@ def get_flights():
         resp.raise_for_status()
         data = resp.json()
     except Exception:
-        app.logger.exception("OpenSky /states/all request failed")
+        status = resp.status_code if resp is not None else "n/a"
+        body_head = resp.text[:200] if resp is not None else "n/a"
+        app.logger.exception(
+            "OpenSky request pipeline failed (status=%s, body head=%r)",
+            status, body_head,
+        )
         return jsonify({"error": "upstream_error", "message": "OpenSky API unavailable."})
 
     states = data.get("states") or []
@@ -161,6 +174,7 @@ def get_flights():
     _cache.move_to_end(bbox_key)
     while len(_cache) > _CACHE_MAX_ENTRIES:
         _cache.popitem(last=False)
+    app.logger.info("Flights served: count=%d cache=miss", len(flights))
     return jsonify(result)
 
 
@@ -170,6 +184,7 @@ def geocode():
     if not q:
         return jsonify({"error": "invalid_params", "message": "q param is required."}), 400
 
+    resp = None
     try:
         resp = requests.get(
             "https://nominatim.openstreetmap.org/search",
@@ -180,7 +195,12 @@ def geocode():
         resp.raise_for_status()
         results = resp.json()
     except Exception:
-        app.logger.exception("Nominatim geocode request failed")
+        status = resp.status_code if resp is not None else "n/a"
+        body_head = resp.text[:200] if resp is not None else "n/a"
+        app.logger.exception(
+            "Nominatim geocode request failed (status=%s, body head=%r)",
+            status, body_head,
+        )
         return jsonify({"error": "upstream_error", "message": "Geocoding unavailable."})
 
     if not results:
@@ -188,6 +208,7 @@ def geocode():
         return jsonify({"error": "not_found", "message": "Location not found."})
 
     r = results[0]
+    app.logger.info("Geocode resolved (q length=%d)", len(q))
     return jsonify({"lat": float(r["lat"]), "lon": float(r["lon"]), "display_name": r["display_name"]})
 
 
@@ -197,6 +218,7 @@ def suggestions():
     if len(q) < 2:
         return jsonify([])
 
+    resp = None
     try:
         resp = requests.get(
             "https://nominatim.openstreetmap.org/search",
@@ -207,9 +229,15 @@ def suggestions():
         resp.raise_for_status()
         results = resp.json()
     except Exception:
-        app.logger.warning("Nominatim suggestions request failed", exc_info=True)
+        status = resp.status_code if resp is not None else "n/a"
+        body_head = resp.text[:200] if resp is not None else "n/a"
+        app.logger.warning(
+            "Nominatim suggestions request failed (status=%s, body head=%r)",
+            status, body_head, exc_info=True,
+        )
         return jsonify([])
 
+    app.logger.info("Suggestions returned %d", len(results))
     return jsonify([
         {"display_name": r["display_name"], "lat": float(r["lat"]), "lon": float(r["lon"])}
         for r in results
