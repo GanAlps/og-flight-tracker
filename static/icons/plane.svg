@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-14 -14 28 28">
+  <!-- Body -->
+  <ellipse cx="0" cy="0" rx="3" ry="10" fill="currentColor"/>
+  <!-- Wings -->
+  <path d="M-12,4 L0,-1 L12,4 L10,6 L0,3 L-10,6 Z" fill="currentColor"/>
+  <!-- Tail fins -->
+  <path d="M-5,8 L0,6 L5,8 L4,10 L0,8.5 L-4,10 Z" fill="currentColor"/>
+</svg>
