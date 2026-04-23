@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flight Tracker</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header id="site-title">Welcome to Osho's experimental flight tracking website</header>
+  <div id="top-bar">
+    <div id="search-group">
+      <input id="search-input" type="text" placeholder="City or airport (e.g. London, JFK)" autocomplete="off" />
+      <button id="search-btn">Go</button>
+      <ul id="suggestions-list"></ul>
+    </div>
+    <div id="controls-group">
+      <button id="refresh-btn">&#8635; Refresh</button>
+      <span id="status-text">Loading...</span>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+  <div id="loading-overlay"><div class="spinner"></div></div>
+  <div id="map"></div>
+  <button id="locate-btn" title="My location" aria-label="My location">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="8"></circle>
+      <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"></circle>
+      <line x1="12" y1="1.5" x2="12" y2="4.5"></line>
+      <line x1="12" y1="19.5" x2="12" y2="22.5"></line>
+      <line x1="1.5" y1="12" x2="4.5" y2="12"></line>
+      <line x1="19.5" y1="12" x2="22.5" y2="12"></line>
+    </svg>
+  </button>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/map.js"></script>
+</body>
+</html>
