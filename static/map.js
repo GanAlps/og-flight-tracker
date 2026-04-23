@@ -30,6 +30,21 @@
   const loadingOverlay = document.getElementById("loading-overlay");
   const toastContainer = document.getElementById("toast-container");
 
+  // ── HTML escape ──────────────────────────────────────────────────────────────
+  // Third-party strings (OpenSky callsign/country, Nominatim display_name) are
+  // not trusted: ADS-B callsigns are broadcast by the aircraft itself, and
+  // Nominatim names come from OSM tags. Always run them through this before
+  // interpolating into innerHTML.
+  function escapeHtml(s) {
+    if (s == null) return "";
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   // ── Toast ────────────────────────────────────────────────────────────────────
   function showToast(message, type = "") {
     const el = document.createElement("div");
@@ -96,9 +111,11 @@
     const hdg = f.heading != null ? Math.round(f.heading) + "°" : "N/A";
     const statusClass = f.on_ground ? "popup-status-ground" : "popup-status-airborne";
     const statusLabel = f.on_ground ? "On Ground" : "Airborne";
+    // callsign and country come from third-party ADS-B broadcasts; escape them.
+    // alt/spd/hdg are numeric-derived; statusClass/statusLabel are internal.
     return `
-      <div class="popup-callsign">&#9992; ${f.callsign}</div>
-      <div class="popup-row"><span class="popup-label">Country</span><span class="popup-value">${f.country || "N/A"}</span></div>
+      <div class="popup-callsign">&#9992; ${escapeHtml(f.callsign)}</div>
+      <div class="popup-row"><span class="popup-label">Country</span><span class="popup-value">${escapeHtml(f.country) || "N/A"}</span></div>
       <div class="popup-row"><span class="popup-label">Altitude</span><span class="popup-value">${alt}</span></div>
       <div class="popup-row"><span class="popup-label">Speed</span><span class="popup-value">${spd}</span></div>
       <div class="popup-row"><span class="popup-label">Heading</span><span class="popup-value">${hdg}</span></div>
@@ -117,7 +134,6 @@
     });
 
     setLoading(true);
-    startCooldown();
     resetCountdown();
 
     try {
@@ -125,6 +141,8 @@
       const data = await res.json();
 
       if (data.error === "zoom_required") {
+        // Server short-circuited before any OpenSky call; don't lock the
+        // manual button or moveend refetch — the user may zoom in immediately.
         clearMarkers();
         if (lastErrorKind !== "zoom_required") {
           showToast("Zoom in to see flights", "warn");
@@ -133,6 +151,10 @@
         stopAutoRefresh("Zoom in to see flights");
         return;
       }
+
+      // Past this point a real OpenSky call was attempted; apply the 10 s
+      // client cooldown to avoid hammering even on error paths.
+      startCooldown();
 
       if (data.error === "rate_limited") {
         clearMarkers();
@@ -226,10 +248,18 @@
       const primary = parts[0];
       const secondary = parts.slice(1).join(", ");
 
+      // Build with DOM methods to avoid HTML-injection via Nominatim display_name
+      // (OSM tags are user-contributed).
       const li = document.createElement("li");
       li.className = "suggestion-item";
-      li.innerHTML = `<div class="suggestion-primary">${primary}</div>
-                      <div class="suggestion-secondary">${secondary}</div>`;
+      const primaryDiv = document.createElement("div");
+      primaryDiv.className = "suggestion-primary";
+      primaryDiv.textContent = primary;
+      const secondaryDiv = document.createElement("div");
+      secondaryDiv.className = "suggestion-secondary";
+      secondaryDiv.textContent = secondary;
+      li.appendChild(primaryDiv);
+      li.appendChild(secondaryDiv);
       li.addEventListener("mousedown", e => {
         e.preventDefault();
         searchInput.value = item.display_name;

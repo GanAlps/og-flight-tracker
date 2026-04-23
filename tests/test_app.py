@@ -32,6 +32,7 @@ def test_app_import_fails_without_credentials(tmp_path):
     )
     assert result.returncode != 0
     assert "OPENSKY_CLIENT_ID" in result.stderr
+    assert "RuntimeError" in result.stderr
 
 
 # ── Phase 1: index route ──────────────────────────────────────────────────────
@@ -202,6 +203,40 @@ def test_flights_cache_returns_without_second_api_call(mock_get, client):
 
 
 @patch("app.requests.get")
+def test_flights_cache_per_bbox_ttl_is_independent(mock_get, client):
+    """A recent fetch for one bbox must not keep another bbox's stale entry alive."""
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"states": [_make_opensky_state()]}
+    mock_resp.raise_for_status = MagicMock()
+    mock_get.return_value = mock_resp
+
+    url_a = "/api/flights?lat1=35&lon1=-125&lat2=40&lon2=-120"
+    url_b = "/api/flights?lat1=45&lon1=-115&lat2=50&lon2=-110"
+
+    client.get(url_a)  # bbox A cached at t_a
+    for key, (_, cached) in list(app_module._cache.items()):
+        app_module._cache[key] = (time.time() - 11, cached)  # age both ways
+    client.get(url_b)  # bbox B fetched at t_b (recent)
+    client.get(url_a)  # bbox A must refetch (its own entry is stale)
+
+    assert mock_get.call_count == 3
+
+
+@patch("app.requests.get")
+def test_flights_cache_evicts_beyond_max_entries(mock_get, client):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"states": []}
+    mock_resp.raise_for_status = MagicMock()
+    mock_get.return_value = mock_resp
+
+    for i in range(app_module._CACHE_MAX_ENTRIES + 5):
+        lat = 30 + 0.2 * i
+        client.get(f"/api/flights?lat1={lat}&lon1=0&lat2={lat + 0.5}&lon2=0.5")
+
+    assert len(app_module._cache) == app_module._CACHE_MAX_ENTRIES
+
+
+@patch("app.requests.get")
 def test_flights_cache_expires_after_rate_limit(mock_get, client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = {"states": [_make_opensky_state()]}
@@ -211,8 +246,9 @@ def test_flights_cache_expires_after_rate_limit(mock_get, client):
     url = "/api/flights?lat1=35&lon1=-125&lat2=40&lon2=-120"
     client.get(url)
 
-    # Simulate time passing beyond rate limit
-    app_module._last_fetch = time.time() - 11
+    # Age the cached entry past the per-bbox TTL
+    for key, (_, cached) in list(app_module._cache.items()):
+        app_module._cache[key] = (time.time() - 11, cached)
 
     client.get(url)
     assert mock_get.call_count == 2

@@ -1,5 +1,6 @@
 import os
 import time
+from collections import OrderedDict
 
 import requests
 from dotenv import load_dotenv
@@ -17,9 +18,13 @@ if not _OPENSKY_CLIENT_ID or not _OPENSKY_CLIENT_SECRET:
 
 app = Flask(__name__)
 
-_cache = {}
-_last_fetch = 0
-_RATE_LIMIT_SECONDS = 10
+# Per-bbox cache: bbox_key -> (fetch_time, result). OrderedDict so we can
+# bound memory with an LRU eviction when running on a long-lived process
+# (e.g. a warm Vercel instance). Each entry carries its own fetch_time so a
+# recently-fetched bbox can't mask a stale cached entry for a different bbox.
+_cache = OrderedDict()
+_CACHE_TTL_SECONDS = 10
+_CACHE_MAX_ENTRIES = 128
 _BBOX_AREA_LIMIT = 25
 
 _TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
@@ -85,9 +90,12 @@ def get_flights():
     bbox_key = (round(lat1, 1), round(lon1, 1), round(lat2, 1), round(lon2, 1))
     now = time.time()
 
-    global _last_fetch
-    if bbox_key in _cache and (now - _last_fetch) < _RATE_LIMIT_SECONDS:
-        return jsonify(_cache[bbox_key])
+    entry = _cache.get(bbox_key)
+    if entry is not None:
+        fetch_time, cached_result = entry
+        if now - fetch_time < _CACHE_TTL_SECONDS:
+            _cache.move_to_end(bbox_key)
+            return jsonify(cached_result)
 
     try:
         token = _get_token()
@@ -125,8 +133,10 @@ def get_flights():
         })
 
     result = {"flights": flights, "count": len(flights), "timestamp": int(now)}
-    _cache[bbox_key] = result
-    _last_fetch = now
+    _cache[bbox_key] = (now, result)
+    _cache.move_to_end(bbox_key)
+    while len(_cache) > _CACHE_MAX_ENTRIES:
+        _cache.popitem(last=False)
     return jsonify(result)
 
 
