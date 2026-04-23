@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from collections import OrderedDict
@@ -5,6 +6,11 @@ from collections import OrderedDict
 import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 load_dotenv()
 
@@ -15,6 +21,10 @@ if not _OPENSKY_CLIENT_ID or not _OPENSKY_CLIENT_SECRET:
         "OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET must be set "
         "(copy .env.example to .env and fill in credentials)."
     )
+logging.info(
+    "OpenSky credentials loaded (client_id length=%d, secret length=%d)",
+    len(_OPENSKY_CLIENT_ID), len(_OPENSKY_CLIENT_SECRET),
+)
 
 app = Flask(__name__)
 
@@ -37,24 +47,34 @@ def _get_token():
     global _token, _token_expires_at
     if _token and time.time() < _token_expires_at - _TOKEN_REFRESH_BUFFER_SECONDS:
         return _token
-    resp = requests.post(
-        _TOKEN_URL,
-        data={
-            "grant_type": "client_credentials",
-            "client_id": _OPENSKY_CLIENT_ID,
-            "client_secret": _OPENSKY_CLIENT_SECRET,
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    body = resp.json()
+    reason = "refresh-before-expiry" if _token else "initial"
+    app.logger.info("Fetching OpenSky token (reason=%s)", reason)
+    try:
+        resp = requests.post(
+            _TOKEN_URL,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": _OPENSKY_CLIENT_ID,
+                "client_secret": _OPENSKY_CLIENT_SECRET,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    except Exception:
+        app.logger.exception("OpenSky token fetch failed")
+        raise
     _token = body["access_token"]
-    _token_expires_at = time.time() + body.get("expires_in", 1800)
+    expires_in = body.get("expires_in", 1800)
+    _token_expires_at = time.time() + expires_in
+    app.logger.info("OpenSky token acquired (expires_in=%ds)", expires_in)
     return _token
 
 
-def _invalidate_token():
+def _invalidate_token(reason="explicit"):
     global _token, _token_expires_at
+    if _token:
+        app.logger.warning("Invalidating OpenSky token (reason=%s)", reason)
     _token = None
     _token_expires_at = 0
 
@@ -85,6 +105,7 @@ def get_flights():
 
     area = (lat2 - lat1) * (lon2 - lon1)
     if area > _BBOX_AREA_LIMIT:
+        app.logger.info("Flight request rejected: bbox area %.2f > %d (zoom_required)", area, _BBOX_AREA_LIMIT)
         return jsonify({"error": "zoom_required", "message": "Zoom in to see flights."})
 
     bbox_key = (round(lat1, 1), round(lon1, 1), round(lat2, 1), round(lon2, 1))
@@ -101,10 +122,12 @@ def get_flights():
         token = _get_token()
         resp = _call_opensky(lat1, lon1, lat2, lon2, token)
         if resp.status_code == 401:
-            _invalidate_token()
+            app.logger.warning("/states/all returned 401; refreshing token and retrying once")
+            _invalidate_token(reason="states-endpoint-401")
             token = _get_token()
             resp = _call_opensky(lat1, lon1, lat2, lon2, token)
         if resp.status_code == 429:
+            app.logger.warning("/states/all returned 429 (rate_limited)")
             return jsonify({
                 "error": "rate_limited",
                 "message": "OpenSky rate limit reached. Auto-refresh is paused — retry manually.",
@@ -112,6 +135,7 @@ def get_flights():
         resp.raise_for_status()
         data = resp.json()
     except Exception:
+        app.logger.exception("OpenSky /states/all request failed")
         return jsonify({"error": "upstream_error", "message": "OpenSky API unavailable."})
 
     states = data.get("states") or []
@@ -156,9 +180,11 @@ def geocode():
         resp.raise_for_status()
         results = resp.json()
     except Exception:
+        app.logger.exception("Nominatim geocode request failed")
         return jsonify({"error": "upstream_error", "message": "Geocoding unavailable."})
 
     if not results:
+        app.logger.info("Geocode no result (q length=%d)", len(q))
         return jsonify({"error": "not_found", "message": "Location not found."})
 
     r = results[0]
@@ -181,6 +207,7 @@ def suggestions():
         resp.raise_for_status()
         results = resp.json()
     except Exception:
+        app.logger.warning("Nominatim suggestions request failed", exc_info=True)
         return jsonify([])
 
     return jsonify([

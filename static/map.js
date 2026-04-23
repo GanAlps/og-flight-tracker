@@ -145,6 +145,7 @@
         // manual button or moveend refetch — the user may zoom in immediately.
         clearMarkers();
         if (lastErrorKind !== "zoom_required") {
+          console.info("zoom_required: pausing auto-refresh until user zooms in");
           showToast("Zoom in to see flights", "warn");
         }
         lastErrorKind = "zoom_required";
@@ -159,6 +160,7 @@
       if (data.error === "rate_limited") {
         clearMarkers();
         if (lastErrorKind !== "rate_limited") {
+          console.info("rate_limited: pausing auto-refresh until next successful fetch");
           showToast(data.message || "Rate limited — tap ↺ to retry", "warn");
         }
         lastErrorKind = "rate_limited";
@@ -167,12 +169,16 @@
       }
 
       if (data.error === "upstream_error") {
+        console.error("upstream_error from /api/flights", data);
         showToast("Flight data unavailable — showing last known positions", "error");
         statusText.textContent = "API error — last known data";
         return;
       }
 
       clearMarkers();
+      if (lastErrorKind) {
+        console.info("Auto-refresh resumed after success (prior state: %s)", lastErrorKind);
+      }
       lastErrorKind = null;
       autoRefreshPaused = false;
       scheduleAutoRefresh();
@@ -191,7 +197,8 @@
       });
 
       statusText.textContent = `${data.count} flight${data.count !== 1 ? "s" : ""} in view`;
-    } catch {
+    } catch (err) {
+      console.error("fetchAndRenderFlights failed", err);
       showToast("Could not reach server", "error");
       statusText.textContent = "Connection error";
     } finally {
@@ -220,12 +227,18 @@
   // ── My location ──────────────────────────────────────────────────────────────
   locateBtn.addEventListener("click", () => {
     if (!navigator.geolocation) {
+      console.warn("Geolocation API unavailable in this browser");
       showToast("Geolocation not supported", "warn");
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      pos => map.setView([pos.coords.latitude, pos.coords.longitude], 10),
+      pos => {
+        console.info("Geolocation success (lat=%s, lon=%s)",
+          pos.coords.latitude.toFixed(1), pos.coords.longitude.toFixed(1));
+        map.setView([pos.coords.latitude, pos.coords.longitude], 10);
+      },
       err => {
+        console.warn("Geolocation error", err && err.code, err && err.message);
         const msg = err && err.code === 1 ? "Location permission denied" : "Couldn't get location";
         showToast(msg, "warn");
       },
@@ -343,13 +356,20 @@
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
       pos => {
+        console.info("Boot: geolocation success (lat=%s, lon=%s)",
+          pos.coords.latitude.toFixed(1), pos.coords.longitude.toFixed(1));
         map.setView([pos.coords.latitude, pos.coords.longitude], 10);
         // moveend debounce triggers the initial fetch at the new location
       },
-      () => fetchAndRenderFlights(),
+      err => {
+        console.warn("Boot: geolocation failed; falling back to world view",
+          err && err.code, err && err.message);
+        fetchAndRenderFlights();
+      },
       { timeout: 15000, maximumAge: 60000, enableHighAccuracy: false }
     );
   } else {
+    console.warn("Boot: geolocation API unavailable; using world view");
     fetchAndRenderFlights();
   }
 })();

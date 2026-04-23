@@ -62,6 +62,18 @@ Both `/api/geocode` and `/api/suggestions` send `User-Agent: og-ft-flight-tracke
 
 Feature specs live under `specs/<feature-name>/` per the spec-driven workflow in `~/.claude/DEVELOPMENT.md`. Existing: `flight-tracker` (initial full-feature build), `search-autocomplete`, `opensky-auth` (OAuth2), `ux-improvements` (rate-limit handling, geolocation, pinch), `ux-polish` (welcome header, my-location icon, 60s cadence, toast-once). Read the relevant spec before changing behavior in that area.
 
+## Logging
+
+Backend uses Python's stdlib `logging` (configured once at import via `logging.basicConfig(level=logging.INFO, ...)`); handlers use `app.logger`. Conventions:
+
+- Every `except Exception:` block calls `app.logger.exception("...")` before returning a degraded response, so the traceback lands in Vercel stdout.
+- Token fetch/refresh/invalidate events are logged at `INFO`/`WARNING` with a `reason=` tag and no token values.
+- State transitions inside `/api/flights` (zoom_required, 401 retry, 429 rate_limited) log a single line each.
+- Successful `/api/flights` responses are **not** logged — Vercel's HTTP access log already covers them, and at 60 s per user the volume adds up.
+- No log line contains credentials, token strings, or user query text; only lengths, timings, and reasons.
+
+Frontend (`static/map.js`) mirrors key transitions to `console.info` / `console.warn` / `console.error` so local debugging in DevTools doesn't need ad-hoc prints.
+
 ## Tests
 
 `tests/test_app.py` mirrors the three routes and uses `unittest.mock.patch("app.requests.get")` / `...post` for all upstream calls — never hit the network in tests. `tests/conftest.py` sets dummy OpenSky credentials in `os.environ` before `app` is imported so the import-time credential check passes, and its `reset_app_state` autouse fixture clears `_cache` and pre-seeds a valid `_token` / `_token_expires_at` between tests. Rely on the fixture rather than re-clearing manually.
