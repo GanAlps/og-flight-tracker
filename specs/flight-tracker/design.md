@@ -13,7 +13,7 @@ A locally-run Python/Flask web app that proxies OpenSky Network flight data to a
 ```mermaid
 graph TD
     Browser["Browser (Leaflet.js)"]
-    Flask["Flask Server (localhost:5000)"]
+    Flask["Flask Server (localhost:5001)"]
     OpenSky["OpenSky Network API"]
     Nominatim["Nominatim Geocoding API"]
     OSM["OpenStreetMap Tile Server"]
